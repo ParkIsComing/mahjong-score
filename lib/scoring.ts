@@ -196,7 +196,7 @@ function detectYakuman(
     if (isChuuren(closedTiles)) return [["chuuren", 13]];
   }
 
-  const kanCount = openMelds.filter(m => m.type === "kan_open" || m.type === "kan_closed").length;
+  const kanCount = (req.open_melds ?? []).filter(m => m.type === "kan_open" || m.type === "kan_closed").length;
 
   for (const decomp of decompositions) {
     const allGroups = [...decomp, ...openGroups];

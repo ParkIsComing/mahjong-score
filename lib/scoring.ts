@@ -196,12 +196,17 @@ function detectYakuman(
     if (isChuuren(closedTiles)) return [["chuuren", 13]];
   }
 
+  const kanCount = openMelds.filter(m => m.type === "kan_open" || m.type === "kan_closed").length;
+
   for (const decomp of decompositions) {
     const allGroups = [...decomp, ...openGroups];
     const tris = allGroups.filter(g => g[0] === "tri");
     const pair = allGroups.find(g => g[0] === "pair");
     const closedTris = decomp.filter(g => g[0] === "tri");
     const results: [string, number][] = [];
+
+    // 사깡자: 깡 4개 (역만)
+    if (kanCount === 4) results.push(["suukantsu", 13]);
 
     // Suuankou: all 4 triplets must be closed
     if (!isOpen && closedTris.length === 4) results.push(["suuankou", 13]);
@@ -304,6 +309,10 @@ function standardYaku(
 
   // 산안코: 닫힌 커쯔 정확히 3개
   if (closedTris.length === 3) yaku.push(["sanankou", 2]);
+
+  // 산깡자: 깡 3개
+  const kanCount = (req.open_melds ?? []).filter(m => m.type === "kan_open" || m.type === "kan_closed").length;
+  if (kanCount === 3) yaku.push(["sankantsu", 2]);
 
   // 준찬타 / 찬타 (열린 손패: 한 수 감소)
   const hasSeq = seqs.length > 0;

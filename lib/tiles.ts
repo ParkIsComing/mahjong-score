@@ -61,6 +61,9 @@ export const YAKU_NAMES: Record<string, string> = {
   chinroutou: "청노두",
   ryuuiisou: "녹일색",
   chuuren: "구련보등",
+  suukantsu: "사깡자",
+  // 일반 역
+  sankantsu: "산깡자",
 };
 
 export function yakuDisplayName(name: string): string {

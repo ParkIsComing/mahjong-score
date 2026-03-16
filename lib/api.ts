@@ -1,5 +1,13 @@
+export type MeldType = "chi" | "pon" | "kan_open" | "kan_closed";
+
+export interface OpenMeld {
+  type: MeldType;
+  tiles: string[];
+}
+
 export interface ScoreRequest {
   closed_hand: string[];
+  open_melds?: OpenMeld[];
   win_type: "ron" | "tsumo";
   riichi: boolean;
   double_riichi: boolean;

@@ -2,9 +2,16 @@
 
 export type WinType = "ron" | "tsumo";
 export type Wind = "east" | "south" | "west" | "north";
+export type MeldType = "chi" | "pon" | "kan_open" | "kan_closed";
+
+export interface OpenMeld {
+  type: MeldType;
+  tiles: string[]; // 3 for chi/pon, 4 for kan
+}
 
 export interface ScoreRequest {
   closed_hand: string[];
+  open_melds?: OpenMeld[];
   win_type: WinType;
   riichi?: boolean;
   double_riichi?: boolean;
@@ -95,7 +102,6 @@ type Group = ["seq", string, string, string] | ["tri", string, string, string] |
 function decompose(tiles: string[]): Group[][] {
   const results: Group[][] = [];
   _decomposeRecursive([...tiles].sort(), [], results);
-  // Deduplicate
   const seen = new Set<string>();
   return results.filter(d => {
     const key = [...d].map(g => g.join(",")).sort().join("|");
@@ -176,30 +182,42 @@ function isChuuren(tiles: string[]): boolean {
 // Yakuman detection
 // ---------------------------------------------------------------------------
 
-function detectYakuman(decompositions: Group[][], tiles: string[], req: ScoreRequest): [string, number][] | null {
-  if (isKokushi(tiles)) return [["kokushi", 13]];
-  if (isChuuren(tiles)) return [["chuuren", 13]];
+function detectYakuman(
+  decompositions: Group[][],
+  openGroups: Group[],
+  closedTiles: string[],
+  allTiles: string[],
+  req: ScoreRequest,
+  isOpen: boolean
+): [string, number][] | null {
+  // Kokushi and Chuuren require closed hand only
+  if (!isOpen) {
+    if (isKokushi(closedTiles)) return [["kokushi", 13]];
+    if (isChuuren(closedTiles)) return [["chuuren", 13]];
+  }
 
   for (const decomp of decompositions) {
-    const tris = decomp.filter(g => g[0] === "tri");
-    const pair = decomp.find(g => g[0] === "pair")!;
+    const allGroups = [...decomp, ...openGroups];
+    const tris = allGroups.filter(g => g[0] === "tri");
+    const pair = allGroups.find(g => g[0] === "pair");
+    const closedTris = decomp.filter(g => g[0] === "tri");
     const results: [string, number][] = [];
 
-    if (tris.length === 4) results.push(["suuankou", 13]);
+    // Suuankou: all 4 triplets must be closed
+    if (!isOpen && closedTris.length === 4) results.push(["suuankou", 13]);
 
     const dragonTris = tris.filter(g => DRAGONS.includes(g[1]));
     if (dragonTris.length === 3) results.push(["daisangen", 13]);
 
     const windTris = tris.filter(g => WINDS.includes(g[1] as Wind));
     if (windTris.length === 4) results.push(["daisuushii", 13]);
-    else if (windTris.length === 3 && WINDS.includes(pair[1] as Wind)) results.push(["shousuushii", 13]);
+    else if (windTris.length === 3 && pair && WINDS.includes(pair[1] as Wind)) results.push(["shousuushii", 13]);
 
-    if (tiles.every(t => isHonor(t))) results.push(["tsuuiisou", 13]);
-    if (tiles.every(t => TERMINALS_SUITS.includes(t))) results.push(["chinroutou", 13]);
-    if (tiles.every(t => GREEN_TILES.has(t))) results.push(["ryuuiisou", 13]);
+    if (allTiles.every(t => isHonor(t))) results.push(["tsuuiisou", 13]);
+    if (allTiles.every(t => TERMINALS_SUITS.includes(t))) results.push(["chinroutou", 13]);
+    if (allTiles.every(t => GREEN_TILES.has(t))) results.push(["ryuuiisou", 13]);
 
     if (results.length > 0) {
-      // Deduplicate
       return [...new Map(results).entries()];
     }
   }
@@ -231,34 +249,46 @@ function chiitoiYaku(req: ScoreRequest): [string, number][] {
   return yaku;
 }
 
-function standardYaku(decomp: Group[], tiles: string[], req: ScoreRequest): [string, number][] {
+function standardYaku(
+  decomp: Group[],
+  openGroups: Group[],
+  closedTiles: string[],
+  allTiles: string[],
+  req: ScoreRequest,
+  isOpen: boolean
+): [string, number][] {
   const yaku: [string, number][] = [];
-  const seqs = decomp.filter(g => g[0] === "seq");
-  const tris = decomp.filter(g => g[0] === "tri");
-  const pair = decomp.find(g => g[0] === "pair")!;
-  const allGroups = [...seqs, ...tris, pair];
+  const allGroups = [...decomp, ...openGroups];
+  const seqs = allGroups.filter(g => g[0] === "seq");
+  const tris = allGroups.filter(g => g[0] === "tri");
+  const pair = allGroups.find(g => g[0] === "pair")!;
+  const closedTris = decomp.filter(g => g[0] === "tri");
 
-  // 리치
-  if (req.double_riichi) yaku.push(["double_riichi", 2]);
-  else if (req.riichi) yaku.push(["riichi", 1]);
-  if (req.ippatsu) yaku.push(["ippatsu", 1]);
+  // Riichi (closed only)
+  if (!isOpen) {
+    if (req.double_riichi) yaku.push(["double_riichi", 2]);
+    else if (req.riichi) yaku.push(["riichi", 1]);
+    if (req.ippatsu) yaku.push(["ippatsu", 1]);
+  }
 
-  // 쯔모
-  if (req.win_type === "tsumo") yaku.push(["tsumo", 1]);
+  // 멘젠쯔모 (closed tsumo only)
+  if (req.win_type === "tsumo" && !isOpen) yaku.push(["tsumo", 1]);
 
-  // 탕야오
-  if (tiles.every(isSimple)) yaku.push(["tanyao", 1]);
+  // 탕야오 (all tiles must be simples)
+  if (allTiles.every(isSimple)) yaku.push(["tanyao", 1]);
 
-  // 핀후
-  if (seqs.length === 4 && !isYakuhai(pair[1], req)) yaku.push(["pinfu", 1]);
+  // 핀후 (closed only)
+  if (!isOpen && seqs.length === 4 && !isYakuhai(pair[1], req)) yaku.push(["pinfu", 1]);
 
-  // 이페코 / 량페코
-  const seqKeys = seqs.map(g => [g[1], g[2], g[3]].sort().join(","));
-  const seqCounts = new Map<string, number>();
-  for (const k of seqKeys) seqCounts.set(k, (seqCounts.get(k) ?? 0) + 1);
-  const dupPairs = [...seqCounts.values()].filter(c => c >= 2).length;
-  if (dupPairs === 2) yaku.push(["ryanpeikou", 3]);
-  else if (dupPairs === 1) yaku.push(["iipeiko", 1]);
+  // 이페코 / 량페코 (closed only)
+  if (!isOpen) {
+    const seqKeys = seqs.map(g => [g[1], g[2], g[3]].sort().join(","));
+    const seqCounts = new Map<string, number>();
+    for (const k of seqKeys) seqCounts.set(k, (seqCounts.get(k) ?? 0) + 1);
+    const dupPairs = [...seqCounts.values()].filter(c => c >= 2).length;
+    if (dupPairs === 2) yaku.push(["ryanpeikou", 3]);
+    else if (dupPairs === 1) yaku.push(["iipeiko", 1]);
+  }
 
   // 역패
   for (const tri of tris) {
@@ -272,62 +302,69 @@ function standardYaku(decomp: Group[], tiles: string[], req: ScoreRequest): [str
   // 토이토이
   if (tris.length === 4) yaku.push(["toitoi", 2]);
 
-  // 산안코 (정확히 3개)
-  if (tris.length === 3) yaku.push(["sanankou", 2]);
+  // 산안코: 닫힌 커쯔 정확히 3개
+  if (closedTris.length === 3) yaku.push(["sanankou", 2]);
 
-  // 준찬타 / 찬타
+  // 준찬타 / 찬타 (열린 손패: 한 수 감소)
   const hasSeq = seqs.length > 0;
   if (hasSeq && allGroups.every(groupHasSuitTerminal)) {
-    yaku.push(["junchan", 3]);
+    yaku.push(["junchan", isOpen ? 2 : 3]);
   } else if (hasSeq && allGroups.every(groupHasTerminalOrHonor)) {
-    yaku.push(["chanta", 2]);
+    yaku.push(["chanta", isOpen ? 1 : 2]);
   }
 
-  // 산쇼쿠 도우준
+  // 산쇼쿠 도우준 (열린 손패: 1판)
   const seqStartsBySuit: Record<string, Set<number>> = { m: new Set(), p: new Set(), s: new Set() };
   for (const g of seqs) {
-    const s = tSuit(g[1]);
-    const n = tNumber(g[1]);
-    if (s && n) seqStartsBySuit[s].add(n);
+    const suit = tSuit(g[1]);
+    const num = tNumber(g[1]);
+    if (suit && num) seqStartsBySuit[suit].add(num);
   }
   const commonSeq = [...seqStartsBySuit.m].filter(n => seqStartsBySuit.p.has(n) && seqStartsBySuit.s.has(n));
-  if (commonSeq.length > 0) yaku.push(["sanshoku_doujun", 2]);
+  if (commonSeq.length > 0) yaku.push(["sanshoku_doujun", isOpen ? 1 : 2]);
 
-  // 산쇼쿠 도우코
+  // 산쇼쿠 도우코 (열린 손패도 2판)
   const triNumsBySuit: Record<string, Set<number>> = { m: new Set(), p: new Set(), s: new Set() };
   for (const g of tris) {
-    const s = tSuit(g[1]);
-    const n = tNumber(g[1]);
-    if (s && n) triNumsBySuit[s].add(n);
+    const suit = tSuit(g[1]);
+    const num = tNumber(g[1]);
+    if (suit && num) triNumsBySuit[suit].add(num);
   }
   const commonTri = [...triNumsBySuit.m].filter(n => triNumsBySuit.p.has(n) && triNumsBySuit.s.has(n));
   if (commonTri.length > 0) yaku.push(["sanshoku_doukou", 2]);
 
-  // 잇쑤
-  for (const s of ["m", "p", "s"]) {
-    const starts = new Set(seqs.filter(g => tSuit(g[1]) === s).map(g => tNumber(g[1])!));
-    if ([1, 4, 7].every(n => starts.has(n))) { yaku.push(["ittsu", 2]); break; }
+  // 잇쑤 (열린 손패: 1판)
+  for (const suit of ["m", "p", "s"]) {
+    const starts = new Set(seqs.filter(g => tSuit(g[1]) === suit).map(g => tNumber(g[1])!));
+    if ([1, 4, 7].every(n => starts.has(n))) { yaku.push(["ittsu", isOpen ? 1 : 2]); break; }
   }
 
-  // 혼이쯔 / 칭이쯔
-  const nonHonorSuits = new Set(tiles.filter(t => !isHonor(t)).map(tSuit).filter(Boolean));
-  const hasHonors = tiles.some(isHonor);
+  // 혼이쯔 / 칭이쯔 (열린 손패: 1판 감소)
+  const nonHonorSuits = new Set(allTiles.filter(t => !isHonor(t)).map(tSuit).filter(Boolean));
+  const hasHonors = allTiles.some(isHonor);
   if (nonHonorSuits.size === 1) {
-    yaku.push(hasHonors ? ["honitsu", 3] : ["chinitsu", 6]);
+    yaku.push(hasHonors ? ["honitsu", isOpen ? 2 : 3] : ["chinitsu", isOpen ? 5 : 6]);
   }
 
   return yaku;
 }
 
-function detectYaku(decompositions: Group[][], tiles: string[], req: ScoreRequest): [string, number][] {
-  const yakuman = detectYakuman(decompositions, tiles, req);
+function detectYaku(
+  decompositions: Group[][],
+  openGroups: Group[],
+  closedTiles: string[],
+  allTiles: string[],
+  req: ScoreRequest,
+  isOpen: boolean
+): [string, number][] {
+  const yakuman = detectYakuman(decompositions, openGroups, closedTiles, allTiles, req, isOpen);
   if (yakuman) return yakuman;
 
-  if (isChiitoi(tiles)) return chiitoiYaku(req);
+  if (isChiitoi(allTiles)) return chiitoiYaku(req);
 
   let best: [string, number][] = [];
   for (const decomp of decompositions) {
-    const y = standardYaku(decomp, tiles, req);
+    const y = standardYaku(decomp, openGroups, closedTiles, allTiles, req, isOpen);
     if (y.reduce((s, [, h]) => s + h, 0) > best.reduce((s, [, h]) => s + h, 0)) best = y;
   }
   return best;
@@ -337,11 +374,17 @@ function detectYaku(decompositions: Group[][], tiles: string[], req: ScoreReques
 // Fu calculation
 // ---------------------------------------------------------------------------
 
-function calculateFu(decomp: Group[], tiles: string[], req: ScoreRequest): number {
-  if (isChiitoi(tiles)) return 25;
+function calculateFu(decomp: Group[], openMelds: OpenMeld[], req: ScoreRequest, isOpen: boolean): number {
+  // Base fu
+  let fu: number;
+  if (isOpen) {
+    fu = 20;
+    if (req.win_type === "tsumo") fu += 2; // tsumo bonus (pinfu impossible when open)
+  } else {
+    fu = req.win_type === "ron" ? 30 : 20;
+  }
 
-  let fu = req.win_type === "ron" ? 30 : 20;
-
+  // Closed hand groups
   for (const group of decomp) {
     const kind = group[0];
     const tile = group[1];
@@ -350,6 +393,19 @@ function calculateFu(decomp: Group[], tiles: string[], req: ScoreRequest): numbe
     } else if (kind === "tri") {
       fu += isTerminalOrHonor(tile) ? 8 : 4;
     }
+  }
+
+  // Open meld fu
+  for (const meld of openMelds) {
+    const tile = meld.tiles[0];
+    if (meld.type === "pon") {
+      fu += isTerminalOrHonor(tile) ? 4 : 2;
+    } else if (meld.type === "kan_open") {
+      fu += isTerminalOrHonor(tile) ? 16 : 8;
+    } else if (meld.type === "kan_closed") {
+      fu += isTerminalOrHonor(tile) ? 32 : 16;
+    }
+    // chi: 0 fu
   }
 
   return Math.ceil(fu / 10) * 10;
@@ -393,7 +449,6 @@ function calculatePoints(han: number, fu: number, isDealer: boolean): ScoreResul
     const b = isDealer ? 18000 : 12000;
     return { ron: b, tsumo_dealer: round100(b / 3), tsumo_non_dealer: round100(b / 3) };
   }
-  // Mangan
   if (han >= 5 || (han === 4 && fu >= 30) || (han === 3 && fu >= 70)) {
     const b = isDealer ? 12000 : 8000;
     return { ron: b, tsumo_dealer: isDealer ? 4000 : 4000, tsumo_non_dealer: isDealer ? 4000 : 2000 };
@@ -421,14 +476,26 @@ function calculatePoints(han: number, fu: number, isDealer: boolean): ScoreResul
 // ---------------------------------------------------------------------------
 
 export function calculateScore(req: ScoreRequest): ScoreResponse {
-  const tiles = req.closed_hand;
-  const isRiichi = req.riichi || req.double_riichi;
+  const closedTiles = req.closed_hand;
+  const openMelds = req.open_melds ?? [];
+  const allTiles = [...closedTiles, ...openMelds.flatMap(m => m.tiles)];
 
-  const doraCount = countDora(tiles, req.dora_indicators ?? []);
-  const uraCount = isRiichi ? countDora(tiles, req.ura_dora_indicators ?? []) : 0;
+  // isOpen: has any non-closed-kan melds (closed kans don't break menzen)
+  const isOpen = openMelds.some(m => m.type !== "kan_closed");
+  const isRiichi = !isOpen && (req.riichi || req.double_riichi);
 
-  const decompositions = decompose(tiles);
-  const yakuList = detectYaku(decompositions, tiles, req);
+  const doraCount = countDora(allTiles, req.dora_indicators ?? []);
+  const uraCount = isRiichi ? countDora(allTiles, req.ura_dora_indicators ?? []) : 0;
+
+  // Convert open melds to Group[] (kans treated as tri for yaku purposes)
+  const openGroups: Group[] = openMelds.map(m =>
+    m.type === "chi"
+      ? ["seq", m.tiles[0], m.tiles[1], m.tiles[2]]
+      : ["tri", m.tiles[0], m.tiles[1], m.tiles[2]]
+  );
+
+  const decompositions = decompose(closedTiles);
+  const yakuList = detectYaku(decompositions, openGroups, closedTiles, allTiles, req, isOpen);
 
   if (yakuList.length === 0) throw new Error("역이 없습니다");
 
@@ -439,9 +506,13 @@ export function calculateScore(req: ScoreRequest): ScoreResponse {
   const isYakuman = han >= 13;
 
   let fu: number;
-  if (isChiitoi(tiles)) fu = 25;
-  else if (decompositions.length > 0) fu = calculateFu(decompositions[0], tiles, req);
-  else fu = 30;
+  if (isChiitoi(allTiles)) {
+    fu = 25;
+  } else if (decompositions.length > 0) {
+    fu = calculateFu(decompositions[0], openMelds, req, isOpen);
+  } else {
+    fu = 30;
+  }
 
   const isDealer = (req.seat_wind ?? "east") === "east";
   const result = calculatePoints(han, fu, isDealer);

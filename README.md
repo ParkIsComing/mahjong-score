@@ -16,8 +16,7 @@
 
 ## 🀇 손패 입력
 
-만수 · 통수 · 삭수 · 자패를 입력할 수 있으며  
-**최대 14장**까지 지원합니다.
+만수 · 통수 · 삭수 · 자패를 입력할 수 있으며 울기도 가능합니다.
 
 <img width="675" height="586" alt="hand input 1" src="https://github.com/user-attachments/assets/972cb3b5-75bb-445c-99ac-5f5357aedfbb" />
 

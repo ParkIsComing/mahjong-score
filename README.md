@@ -6,7 +6,6 @@
 <img width="1104" height="718" alt="app screenshot" src="https://github.com/user-attachments/assets/7de15c98-016a-4be6-a867-c8563ee15d1d" />
 
 
-
 # 기능
 
 ## 🧭 자풍 · 장풍 설정
